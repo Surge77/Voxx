@@ -12,6 +12,20 @@ MODEL_NAME = "large-v3-turbo"
 LANGUAGE = "en"
 
 
+def prepare_audio_for_noise_reduction(data):
+    import numpy as np
+
+    audio = np.asarray(data)
+    if audio.ndim == 2:
+        # soundfile returns (frames, channels); noisereduce expects mono or
+        # (channels, frames). Mix to mono to avoid treating frames as channels.
+        audio = audio.mean(axis=1)
+    elif audio.ndim > 2:
+        audio = audio.reshape(-1)
+
+    return audio.astype(np.float32, copy=False)
+
+
 def transcribe(audio_path: Path) -> dict[str, object]:
     started = time.perf_counter()
 
@@ -38,7 +52,8 @@ def transcribe(audio_path: Path) -> dict[str, object]:
         }
 
     data, sample_rate = sf.read(str(audio_path))
-    reduced = nr.reduce_noise(y=np.asarray(data), sr=sample_rate)
+    audio = prepare_audio_for_noise_reduction(data)
+    reduced = nr.reduce_noise(y=audio, sr=sample_rate)
     clean_path = audio_path.with_name(f"{audio_path.stem}.clean.wav")
     sf.write(str(clean_path), reduced, sample_rate)
 
@@ -75,4 +90,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

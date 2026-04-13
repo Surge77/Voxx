@@ -73,7 +73,7 @@ export function App() {
         setStatusMessage("Recording");
       },
       onProcessingStart: () => {
-        setRecordingState("processing");
+        setRecordingState("idle");
         setStatusMessage("Processing");
       },
       onError: (message) => {
@@ -103,7 +103,7 @@ export function App() {
 
   async function handleStopRecording() {
     try {
-      setRecordingState("processing");
+      setRecordingState("idle");
       setStatusMessage("Processing");
       const result = await api.stopRecordingAndProcess();
 

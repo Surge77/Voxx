@@ -97,11 +97,6 @@ textarea:focus-visible {
   animation-delay: -190ms;
 }
 
-.voxx-voice-capsule-processing .voxx-voice-bar {
-  animation-duration: 1100ms;
-  background: rgba(255, 255, 255, 0.52);
-}
-
 @keyframes voxx-wave {
   0%,
   100% {

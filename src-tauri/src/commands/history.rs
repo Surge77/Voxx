@@ -42,12 +42,35 @@ pub fn repaste_entry(app: tauri::AppHandle, state: State<'_, AppState>, id: i64)
 pub fn paste_from_clipboard() {
     #[cfg(windows)]
     {
-        use enigo::{Direction, Enigo, Key, Keyboard, Settings};
-        if let Ok(mut enigo) = Enigo::new(&Settings::default()) {
-            let _ = enigo.key(Key::Control, Direction::Press);
-            let _ = enigo.key(Key::Unicode('v'), Direction::Click);
-            let _ = enigo.key(Key::Control, Direction::Release);
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VK_CONTROL,
+            VK_V,
+        };
+
+        fn keyboard_input(vk: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+            INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY(vk),
+                        wScan: 0,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            }
+        }
+
+        let inputs = [
+            keyboard_input(VK_CONTROL.0, KEYBD_EVENT_FLAGS(0)),
+            keyboard_input(VK_V.0, KEYBD_EVENT_FLAGS(0)),
+            keyboard_input(VK_V.0, KEYEVENTF_KEYUP),
+            keyboard_input(VK_CONTROL.0, KEYEVENTF_KEYUP),
+        ];
+
+        unsafe {
+            let _ = SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
         }
     }
 }
-
