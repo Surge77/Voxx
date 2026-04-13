@@ -42,3 +42,81 @@ textarea:focus-visible {
   outline-offset: 2px;
 }
 
+.voxx-voice-capsule {
+  width: 42px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(5, 7, 9, 0.94);
+  box-shadow:
+    0 8px 22px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.voxx-voice-bars {
+  height: 9px;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.voxx-voice-bar {
+  width: 1px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  transform-origin: center;
+  animation: voxx-wave 760ms ease-in-out infinite;
+}
+
+.voxx-voice-bar:nth-child(2),
+.voxx-voice-bar:nth-child(11) {
+  animation-delay: -680ms;
+}
+
+.voxx-voice-bar:nth-child(3),
+.voxx-voice-bar:nth-child(10) {
+  animation-delay: -560ms;
+}
+
+.voxx-voice-bar:nth-child(4),
+.voxx-voice-bar:nth-child(9) {
+  animation-delay: -430ms;
+}
+
+.voxx-voice-bar:nth-child(5),
+.voxx-voice-bar:nth-child(8) {
+  animation-delay: -310ms;
+}
+
+.voxx-voice-bar:nth-child(6),
+.voxx-voice-bar:nth-child(7) {
+  animation-delay: -190ms;
+}
+
+.voxx-voice-capsule-processing .voxx-voice-bar {
+  animation-duration: 1100ms;
+  background: rgba(255, 255, 255, 0.52);
+}
+
+@keyframes voxx-wave {
+  0%,
+  100% {
+    transform: scaleY(0.38);
+    opacity: 0.45;
+  }
+
+  45% {
+    transform: scaleY(1);
+    opacity: 0.95;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voxx-voice-bar {
+    animation: none;
+  }
+}
