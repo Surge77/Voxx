@@ -1,7 +1,7 @@
 use crate::commands::audio::choose_input_device;
 use crate::commands::history::paste_from_clipboard;
 use crate::focus::{capture_foreground_target, restore_foreground_target};
-use crate::pipeline::{post_process_with_ollama, transcribe_audio, warm_ollama, warm_transcriber, PipelineResult};
+use crate::pipeline::{post_process_with_ollama, should_use_ollama, transcribe_audio, warm_ollama, warm_transcriber, PipelineResult};
 use crate::state::{AppState, RecordingSession};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::SampleFormat;
@@ -81,7 +81,10 @@ pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(),
     });
 
     warm_transcriber();
-    tauri::async_runtime::spawn(warm_ollama());
+    let dictionary_lines = state.db.dictionary_prompt_lines().unwrap_or_default();
+    if should_use_ollama(preferences.active_mode, &dictionary_lines) {
+        tauri::async_runtime::spawn(warm_ollama());
+    }
 
     Ok(())
 }

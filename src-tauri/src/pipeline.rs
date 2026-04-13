@@ -175,9 +175,14 @@ pub fn resolve_transcribe_script_path_from(cwd: &Path) -> PathBuf {
 }
 
 pub async fn post_process_with_ollama(db: &Database, mode: DictationMode, raw_text: &str) -> anyhow::Result<String> {
-    let dictionary = db.dictionary_prompt_lines()?.join("\n");
+    let dictionary_lines = db.dictionary_prompt_lines()?;
+    if !should_use_ollama(mode, &dictionary_lines) {
+        return Ok(apply_dictionary_replacements(raw_text, &dictionary_lines));
+    }
+
+    let dictionary = dictionary_lines.join("\n");
     let prompt = format!(
-        "You are Voxx's dictation formatter. Return only the final text to paste. Do not add headings, labels, explanations, quotes, or markdown. Do not repeat the transcript.\n\nMode instruction:\n{}\n\nCustom dictionary:\n{}\n\nRaw transcript:\n{}",
+        "You are Voxx's dictation formatter, not an assistant. Return only the user's spoken words formatted for paste. If the transcript is a question, preserve it as a question and do not answer it. Do not add headings, labels, explanations, quotes, or markdown. Do not repeat the transcript.\n\nMode instruction:\n{}\n\nCustom dictionary:\n{}\n\nRaw transcript:\n{}",
         mode_prompt(mode),
         dictionary,
         raw_text
@@ -207,6 +212,14 @@ pub async fn post_process_with_ollama(db: &Database, mode: DictationMode, raw_te
     Ok(clean_processed_text(&parsed.response))
 }
 
+pub fn should_use_ollama(mode: DictationMode, dictionary_lines: &[String]) -> bool {
+    mode != DictationMode::General || !dictionary_lines.is_empty()
+}
+
+pub fn apply_dictionary_replacements(raw_text: &str, _dictionary_lines: &[String]) -> String {
+    raw_text.trim().to_string()
+}
+
 pub fn clean_processed_text(response: &str) -> String {
     let mut text = response.trim().to_string();
 
@@ -227,6 +240,15 @@ pub fn clean_processed_text(response: &str) -> String {
         })
         .collect();
     text = lines.join("\n");
+
+    for prefix in ["Answer:", "Response:", "Assistant:", "Output:"] {
+        if text
+            .to_ascii_lowercase()
+            .starts_with(&prefix.to_ascii_lowercase())
+        {
+            text = text[prefix.len()..].trim().to_string();
+        }
+    }
 
     while let Some(stripped) = strip_matching_outer_quotes(&text) {
         text = stripped.trim().to_string();
@@ -291,7 +313,8 @@ pub async fn ollama_status() -> DiagnosticResult {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_processed_text, resolve_transcribe_script_path_from};
+    use super::{clean_processed_text, resolve_transcribe_script_path_from, should_use_ollama};
+    use crate::modes::DictationMode;
     use std::path::PathBuf;
 
     #[test]
@@ -311,5 +334,24 @@ mod tests {
         let response = "\"Hello, everyone!\"\n\nCorrected Text:\n\n\"Thank you for joining us.\"";
 
         assert_eq!(clean_processed_text(response), "Thank you for joining us.");
+    }
+
+    #[test]
+    fn clean_processed_text_removes_answer_prefixes() {
+        assert_eq!(
+            clean_processed_text("Answer: The capital of France is Paris."),
+            "The capital of France is Paris."
+        );
+    }
+
+    #[test]
+    fn general_mode_without_dictionary_skips_ollama() {
+        assert!(!should_use_ollama(DictationMode::General, &[]));
+    }
+
+    #[test]
+    fn specialized_modes_or_dictionary_use_ollama() {
+        assert!(should_use_ollama(DictationMode::Code, &[]));
+        assert!(should_use_ollama(DictationMode::General, &["Replace react query with React Query.".to_string()]));
     }
 }
