@@ -1,5 +1,5 @@
 import { register, unregisterAll } from "@tauri-apps/plugin-global-shortcut";
-import { api } from "./tauri";
+import { api, isTauriRuntime } from "./tauri";
 
 type HotkeyHandlers = {
   onRecordingStart: () => void;
@@ -9,6 +9,10 @@ type HotkeyHandlers = {
 };
 
 export async function registerRecordingHotkey(handlers: HotkeyHandlers) {
+  if (!isTauriRuntime()) {
+    return;
+  }
+
   await unregisterAll();
   await register("CommandOrControl+Space", async (event) => {
     try {
@@ -28,4 +32,3 @@ export async function registerRecordingHotkey(handlers: HotkeyHandlers) {
     }
   });
 }
-
