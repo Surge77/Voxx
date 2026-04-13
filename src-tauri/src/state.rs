@@ -49,10 +49,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(app: &AppHandle) -> tauri::Result<Self> {
+    pub fn new(app: &AppHandle) -> Result<Self, Box<dyn std::error::Error>> {
         let data_dir = app.path().app_data_dir()?;
         std::fs::create_dir_all(&data_dir)?;
-        let db = Database::open(data_dir.join("voxx.db")).map_err(|err| tauri::Error::Anyhow(err.into()))?;
+        let db = Database::open(data_dir.join("voxx.db"))?;
         let preferences = db.load_preferences().unwrap_or_default();
 
         Ok(Self {

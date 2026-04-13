@@ -3,7 +3,7 @@ use crate::commands::history::paste_from_clipboard;
 use crate::pipeline::{post_process_with_ollama, transcribe_audio, PipelineResult};
 use crate::state::{AppState, RecordingSession};
 use cpal::traits::{DeviceTrait, StreamTrait};
-use cpal::{Sample, SampleFormat};
+use cpal::SampleFormat;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::{AppHandle, Manager, State};
@@ -154,7 +154,7 @@ fn build_stream(
         SampleFormat::I16 => device
             .build_input_stream(
                 config,
-                move |data: &[i16], _| push_samples(data.iter().map(|sample| sample.to_f32()), &samples),
+                move |data: &[i16], _| push_samples(data.iter().map(|sample| *sample as f32 / i16::MAX as f32), &samples),
                 error_handler,
                 None,
             )
@@ -162,7 +162,7 @@ fn build_stream(
         SampleFormat::U16 => device
             .build_input_stream(
                 config,
-                move |data: &[u16], _| push_samples(data.iter().map(|sample| sample.to_f32()), &samples),
+                move |data: &[u16], _| push_samples(data.iter().map(|sample| (*sample as f32 / u16::MAX as f32) * 2.0 - 1.0), &samples),
                 error_handler,
                 None,
             )
@@ -205,4 +205,3 @@ mod tests {
         assert_eq!(MIN_HOLD_MS, 300);
     }
 }
-

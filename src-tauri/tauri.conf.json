@@ -32,7 +32,6 @@
     "windows": {
       "nsis": {
         "displayLanguageSelector": false,
-        "installerIcon": null,
         "installMode": "perMachine"
       }
     },
@@ -44,4 +43,3 @@
     }
   }
 }
-
