@@ -4,6 +4,7 @@ use crate::pipeline::{post_process_with_ollama, transcribe_audio, PipelineResult
 use crate::state::{AppState, RecordingSession};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::SampleFormat;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::{AppHandle, Manager, State};
@@ -32,8 +33,40 @@ pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(),
     let sample_rate = config.sample_rate().0;
     let channels = config.channels();
     let samples = Arc::new(Mutex::new(Vec::<f32>::new()));
-    let stream = build_stream(&device, &config.into(), samples.clone())?;
-    stream.play().map_err(|err| err.to_string())?;
+    let selected_audio_device = preferences.selected_audio_device.clone();
+    let thread_samples = samples.clone();
+    let (stop_tx, stop_rx) = mpsc::channel();
+
+    std::thread::spawn(move || {
+        let device = match choose_input_device(selected_audio_device.as_deref()) {
+            Ok(device) => device,
+            Err(error) => {
+                eprintln!("Voxx audio device error: {error}");
+                return;
+            }
+        };
+        let supported_config = match device.default_input_config() {
+            Ok(config) => config,
+            Err(error) => {
+                eprintln!("Voxx audio config error: {error}");
+                return;
+            }
+        };
+        let stream_config = supported_config.into();
+        let stream = match build_stream(&device, &stream_config, thread_samples) {
+            Ok(stream) => stream,
+            Err(error) => {
+                eprintln!("Voxx audio stream error: {error}");
+                return;
+            }
+        };
+        if let Err(error) = stream.play() {
+            eprintln!("Voxx audio stream play error: {error}");
+            return;
+        }
+        let _ = stop_rx.recv();
+        drop(stream);
+    });
 
     *recording = Some(RecordingSession {
         started_at: Instant::now(),
@@ -41,7 +74,7 @@ pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         sample_rate,
         channels,
         samples,
-        stream: Some(stream),
+        stop_tx: Some(stop_tx),
     });
 
     Ok(())
@@ -56,7 +89,9 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
 
     let mut session = session.ok_or_else(|| "No active recording".to_string())?;
     let duration_ms = session.started_at.elapsed().as_millis() as i64;
-    drop(session.stream.take());
+    if let Some(stop_tx) = session.stop_tx.take() {
+        let _ = stop_tx.send(());
+    }
 
     let mode = state
         .preferences

@@ -143,7 +143,8 @@ impl Database {
     pub fn list_dictionary(&self) -> rusqlite::Result<Vec<DictionaryEntry>> {
         let conn = self.connect()?;
         let mut stmt = conn.prepare("SELECT id, wrong, right, created_at FROM dictionary_entries ORDER BY id DESC")?;
-        stmt.query_map([], dictionary_from_row)?.collect()
+        let entries = stmt.query_map([], dictionary_from_row)?.collect();
+        entries
     }
 
     pub fn insert_dictionary(&self, wrong: &str, right: &str) -> rusqlite::Result<DictionaryEntry> {
@@ -269,4 +270,3 @@ mod tests {
             .replace(' ', "-")
     }
 }
-

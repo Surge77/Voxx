@@ -1,8 +1,8 @@
 use crate::database::Database;
 use crate::modes::DictationMode;
-use cpal::Stream;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tauri::{AppHandle, Manager};
@@ -13,7 +13,7 @@ pub struct RecordingSession {
     pub sample_rate: u32,
     pub channels: u16,
     pub samples: Arc<Mutex<Vec<f32>>>,
-    pub stream: Option<Stream>,
+    pub stop_tx: Option<Sender<()>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
