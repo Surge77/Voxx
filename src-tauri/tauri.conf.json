@@ -1,0 +1,47 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Voxx",
+  "version": "0.1.0",
+  "identifier": "com.voxx.app",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Voxx",
+        "width": 1180,
+        "height": 760,
+        "minWidth": 940,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Voxx",
+    "shortDescription": "Your voice, typed instantly.",
+    "longDescription": "Voxx records voice from a global hotkey, transcribes it locally, formats it with Ollama, and pastes the result at the cursor.",
+    "windows": {
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installerIcon": null,
+        "installMode": "perMachine"
+      }
+    },
+    "externalBin": []
+  },
+  "plugins": {
+    "sql": {
+      "preload": ["sqlite:voxx.db"]
+    }
+  }
+}
+
