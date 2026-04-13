@@ -33,7 +33,12 @@ pub fn capture_foreground_target() -> Option<ForegroundTarget> {
 #[cfg(windows)]
 pub fn restore_foreground_target(target: Option<ForegroundTarget>) -> bool {
     use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindow, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{SetActiveWindow, SetFocus};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, IsIconic, IsWindow, SetForegroundWindow,
+        ShowWindow, SW_RESTORE,
+    };
 
     let Some(target) = target else {
         return false;
@@ -49,8 +54,34 @@ pub fn restore_foreground_target(target: Option<ForegroundTarget>) -> bool {
             let _ = ShowWindow(hwnd, SW_RESTORE);
         }
 
+        let current_thread_id = GetCurrentThreadId();
+        let target_thread_id = GetWindowThreadProcessId(hwnd, None);
+        let foreground = GetForegroundWindow();
+        let foreground_thread_id = GetWindowThreadProcessId(foreground, None);
+
+        let attach_target = target_thread_id != 0 && target_thread_id != current_thread_id;
+        let attach_foreground = foreground_thread_id != 0 && foreground_thread_id != current_thread_id;
+
+        if attach_target {
+            let _ = AttachThreadInput(current_thread_id, target_thread_id, true);
+        }
+        if attach_foreground && foreground_thread_id != target_thread_id {
+            let _ = AttachThreadInput(current_thread_id, foreground_thread_id, true);
+        }
+
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetActiveWindow(hwnd);
+        let _ = SetFocus(hwnd);
         let restored = SetForegroundWindow(hwnd).as_bool();
-        std::thread::sleep(Duration::from_millis(90));
+
+        if attach_foreground && foreground_thread_id != target_thread_id {
+            let _ = AttachThreadInput(current_thread_id, foreground_thread_id, false);
+        }
+        if attach_target {
+            let _ = AttachThreadInput(current_thread_id, target_thread_id, false);
+        }
+
+        std::thread::sleep(Duration::from_millis(160));
         restored
     }
 }
