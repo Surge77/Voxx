@@ -1,5 +1,6 @@
 mod commands;
 mod database;
+mod focus;
 mod modes;
 mod pipeline;
 mod state;
@@ -53,4 +54,3 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running Voxx");
 }
-

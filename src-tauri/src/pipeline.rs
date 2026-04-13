@@ -177,7 +177,7 @@ pub fn resolve_transcribe_script_path_from(cwd: &Path) -> PathBuf {
 pub async fn post_process_with_ollama(db: &Database, mode: DictationMode, raw_text: &str) -> anyhow::Result<String> {
     let dictionary = db.dictionary_prompt_lines()?.join("\n");
     let prompt = format!(
-        "{}\n\nCustom dictionary:\n{}\n\nRaw transcript:\n{}\n\nReturn only the final corrected text.",
+        "You are Voxx's dictation formatter. Return only the final text to paste. Do not add headings, labels, explanations, quotes, or markdown. Do not repeat the transcript.\n\nMode instruction:\n{}\n\nCustom dictionary:\n{}\n\nRaw transcript:\n{}",
         mode_prompt(mode),
         dictionary,
         raw_text
@@ -204,7 +204,46 @@ pub async fn post_process_with_ollama(db: &Database, mode: DictationMode, raw_te
     }
 
     let parsed = response.json::<OllamaResponse>().await?;
-    Ok(parsed.response.trim().to_string())
+    Ok(clean_processed_text(&parsed.response))
+}
+
+pub fn clean_processed_text(response: &str) -> String {
+    let mut text = response.trim().to_string();
+
+    if let Some((_, after)) = text.rsplit_once("Corrected Text:") {
+        text = after.trim().to_string();
+    }
+
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            !line.is_empty()
+                && lower != "corrected text:"
+                && lower != "final text:"
+                && lower != "transcription:"
+                && lower != "raw transcript:"
+        })
+        .collect();
+    text = lines.join("\n");
+
+    while let Some(stripped) = strip_matching_outer_quotes(&text) {
+        text = stripped.trim().to_string();
+    }
+
+    text
+}
+
+fn strip_matching_outer_quotes(text: &str) -> Option<&str> {
+    let pairs = [("\"", "\""), ("'", "'"), ("\u{201c}", "\u{201d}")];
+    for (open, close) in pairs {
+        if text.starts_with(open) && text.ends_with(close) && text.len() > open.len() + close.len() {
+            return Some(&text[open.len()..text.len() - close.len()]);
+        }
+    }
+
+    None
 }
 
 pub async fn warm_ollama() {
@@ -252,7 +291,7 @@ pub async fn ollama_status() -> DiagnosticResult {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_transcribe_script_path_from;
+    use super::{clean_processed_text, resolve_transcribe_script_path_from};
     use std::path::PathBuf;
 
     #[test]
@@ -265,5 +304,12 @@ mod tests {
 
         assert!(resolve_transcribe_script_path_from(&project_root).ends_with("src-tauri/sidecar/transcribe.py"));
         assert!(resolve_transcribe_script_path_from(&src_tauri).ends_with("sidecar/transcribe.py"));
+    }
+
+    #[test]
+    fn clean_processed_text_removes_llm_labels_and_outer_quotes() {
+        let response = "\"Hello, everyone!\"\n\nCorrected Text:\n\n\"Thank you for joining us.\"";
+
+        assert_eq!(clean_processed_text(response), "Thank you for joining us.");
     }
 }

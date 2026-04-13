@@ -1,4 +1,5 @@
 use crate::database::Database;
+use crate::focus::ForegroundTarget;
 use crate::modes::DictationMode;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -14,6 +15,7 @@ pub struct RecordingSession {
     pub channels: u16,
     pub samples: Arc<Mutex<Vec<f32>>>,
     pub stop_tx: Option<Sender<()>>,
+    pub paste_target: Option<ForegroundTarget>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

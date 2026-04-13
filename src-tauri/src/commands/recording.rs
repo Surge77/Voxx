@@ -1,5 +1,6 @@
 use crate::commands::audio::choose_input_device;
 use crate::commands::history::paste_from_clipboard;
+use crate::focus::{capture_foreground_target, restore_foreground_target};
 use crate::pipeline::{post_process_with_ollama, transcribe_audio, warm_ollama, warm_transcriber, PipelineResult};
 use crate::state::{AppState, RecordingSession};
 use cpal::traits::{DeviceTrait, StreamTrait};
@@ -24,6 +25,7 @@ pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         .lock()
         .map_err(|_| "Preferences lock poisoned".to_string())?
         .clone();
+    let paste_target = capture_foreground_target();
 
     let data_dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
     std::fs::create_dir_all(&data_dir).map_err(|err| err.to_string())?;
@@ -75,6 +77,7 @@ pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         channels,
         samples,
         stop_tx: Some(stop_tx),
+        paste_target,
     });
 
     warm_transcriber();
@@ -148,6 +151,7 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
     app.clipboard()
         .write_text(processed_text.clone())
         .map_err(|err| err.to_string())?;
+    restore_foreground_target(session.paste_target);
     paste_from_clipboard();
     let entry = state
         .db
