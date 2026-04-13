@@ -22,6 +22,9 @@ export function Dashboard({ history, onRefresh }: DashboardProps) {
 
   async function saveEdit(entry: HistoryEntry) {
     await api.updateHistoryEntry(entry.id, draft);
+    if (draft.trim() && draft.trim() !== entry.processedText.trim()) {
+      await api.saveCorrection(entry.id, entry.processedText, draft);
+    }
     setEditingId(null);
     setDraft("");
     await onRefresh();
