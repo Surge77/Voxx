@@ -1,6 +1,6 @@
 use crate::commands::audio::choose_input_device;
 use crate::commands::history::paste_from_clipboard;
-use crate::pipeline::{post_process_with_ollama, transcribe_audio, PipelineResult};
+use crate::pipeline::{post_process_with_ollama, transcribe_audio, warm_ollama, warm_transcriber, PipelineResult};
 use crate::state::{AppState, RecordingSession};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::SampleFormat;
@@ -76,6 +76,9 @@ pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         samples,
         stop_tx: Some(stop_tx),
     });
+
+    warm_transcriber();
+    tauri::async_runtime::spawn(warm_ollama());
 
     Ok(())
 }

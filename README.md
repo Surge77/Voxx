@@ -52,3 +52,10 @@ For local sidecar smoke tests without Whisper installed, set:
 $env:VOXX_FIXTURE_TRANSCRIPT = "react query"
 ```
 
+The default dev transcription model is `tiny.en` on CPU with int8 compute so the app stays responsive on machines without CUDA/cuBLAS installed. Override it when you want higher accuracy:
+
+```powershell
+$env:VOXX_WHISPER_MODEL = "large-v3-turbo"
+$env:VOXX_WHISPER_DEVICE = "cuda"
+$env:VOXX_WHISPER_COMPUTE_TYPE = "float16"
+```

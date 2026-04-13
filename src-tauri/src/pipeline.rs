@@ -2,8 +2,10 @@ use crate::database::Database;
 use crate::modes::{mode_prompt, DictationMode};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,7 +31,23 @@ pub struct DiagnosticResult {
 struct TranscribeOutput {
     #[serde(rename = "rawText")]
     raw_text: String,
+    error: Option<String>,
 }
+
+struct TranscriberProcess {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+}
+
+impl Drop for TranscriberProcess {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+static TRANSCRIBER: OnceLock<Mutex<Option<TranscriberProcess>>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 struct OllamaResponse {
@@ -40,6 +58,15 @@ pub async fn transcribe_audio(audio_path: &Path) -> anyhow::Result<String> {
     if let Ok(fixture) = std::env::var("VOXX_FIXTURE_TRANSCRIPT") {
         return Ok(fixture);
     }
+
+    if let Ok(text) = transcribe_audio_with_server(audio_path) {
+        return Ok(text);
+    }
+
+    // Fallback keeps the app usable if the warm sidecar died.
+    let _ = TRANSCRIBER.get_or_init(|| Mutex::new(None)).lock().map(|mut process| {
+        *process = None;
+    });
 
     let script_path = resolve_transcribe_script_path_from(&std::env::current_dir()?);
     let output = Command::new("python")
@@ -53,7 +80,89 @@ pub async fn transcribe_audio(audio_path: &Path) -> anyhow::Result<String> {
     }
 
     let parsed: TranscribeOutput = serde_json::from_slice(&output.stdout)?;
+    if let Some(error) = parsed.error {
+        anyhow::bail!(error);
+    }
     Ok(parsed.raw_text)
+}
+
+pub fn warm_transcriber() {
+    if std::env::var("VOXX_FIXTURE_TRANSCRIPT").is_ok() {
+        return;
+    }
+
+    std::thread::spawn(|| {
+        let mutex = TRANSCRIBER.get_or_init(|| Mutex::new(None));
+        let Ok(mut guard) = mutex.lock() else {
+            eprintln!("Voxx transcriber warmup failed: lock poisoned");
+            return;
+        };
+
+        if guard.is_none() {
+            match start_transcriber_process() {
+                Ok(process) => {
+                    *guard = Some(process);
+                }
+                Err(error) => {
+                    eprintln!("Voxx transcriber warmup failed: {error}");
+                }
+            }
+        }
+    });
+}
+
+fn transcribe_audio_with_server(audio_path: &Path) -> anyhow::Result<String> {
+    let mutex = TRANSCRIBER.get_or_init(|| Mutex::new(None));
+    let mut guard = mutex.lock().map_err(|_| anyhow::anyhow!("Transcriber lock poisoned"))?;
+    if guard.is_none() {
+        *guard = Some(start_transcriber_process()?);
+    }
+
+    let transcriber = guard
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("Transcriber process missing"))?;
+    writeln!(
+        transcriber.stdin,
+        "{}",
+        serde_json::json!({ "audio": audio_path }).to_string()
+    )?;
+    transcriber.stdin.flush()?;
+
+    let mut line = String::new();
+    let bytes_read = transcriber.stdout.read_line(&mut line)?;
+    if bytes_read == 0 {
+        anyhow::bail!("Transcriber process closed");
+    }
+
+    let parsed: TranscribeOutput = serde_json::from_str(&line)?;
+    if let Some(error) = parsed.error {
+        anyhow::bail!(error);
+    }
+    Ok(parsed.raw_text)
+}
+
+fn start_transcriber_process() -> anyhow::Result<TranscriberProcess> {
+    let script_path = resolve_transcribe_script_path_from(&std::env::current_dir()?);
+    let mut child = Command::new("python")
+        .arg(script_path)
+        .arg("--serve")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    let stdin = child.stdin.take().ok_or_else(|| anyhow::anyhow!("Transcriber stdin unavailable"))?;
+    let stdout = child.stdout.take().ok_or_else(|| anyhow::anyhow!("Transcriber stdout unavailable"))?;
+    let mut stdout = BufReader::new(stdout);
+    let mut ready = String::new();
+    stdout.read_line(&mut ready)?;
+
+    let ready_value: serde_json::Value = serde_json::from_str(&ready)?;
+    if ready_value.get("ready").and_then(|value| value.as_bool()) != Some(true) {
+        anyhow::bail!("Transcriber did not report ready");
+    }
+
+    Ok(TranscriberProcess { child, stdin, stdout })
 }
 
 pub fn resolve_transcribe_script_path_from(cwd: &Path) -> PathBuf {
@@ -80,7 +189,12 @@ pub async fn post_process_with_ollama(db: &Database, mode: DictationMode, raw_te
         .json(&serde_json::json!({
             "model": "phi4-mini",
             "prompt": prompt,
-            "stream": false
+            "stream": false,
+            "options": {
+                "temperature": 0,
+                "num_predict": 256
+            },
+            "keep_alive": "10m"
         }))
         .send()
         .await?;
@@ -91,6 +205,28 @@ pub async fn post_process_with_ollama(db: &Database, mode: DictationMode, raw_te
 
     let parsed = response.json::<OllamaResponse>().await?;
     Ok(parsed.response.trim().to_string())
+}
+
+pub async fn warm_ollama() {
+    let client = Client::new();
+    let result = client
+        .post("http://localhost:11434/api/generate")
+        .json(&serde_json::json!({
+            "model": "phi4-mini",
+            "prompt": "ok",
+            "stream": false,
+            "options": {
+                "temperature": 0,
+                "num_predict": 1
+            },
+            "keep_alive": "10m"
+        }))
+        .send()
+        .await;
+
+    if let Err(error) = result {
+        eprintln!("Voxx Ollama warmup failed: {error}");
+    }
 }
 
 pub async fn ollama_status() -> DiagnosticResult {

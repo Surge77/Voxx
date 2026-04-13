@@ -35,3 +35,41 @@ def test_prepare_audio_for_noise_reduction_converts_soundfile_stereo_to_mono():
 
     assert prepared.shape == (101760,)
     assert prepared.dtype == np.float32
+
+
+def test_transcribe_defaults_to_cpu_int8_model():
+    import transcribe
+
+    assert transcribe.DEVICE == "cpu"
+    assert transcribe.COMPUTE_TYPE == "int8"
+    assert transcribe.MODEL_NAME == "tiny.en"
+
+
+def test_transcribe_server_fixture_handles_json_line_request(tmp_path: Path):
+    audio_path = tmp_path / "sample.wav"
+    audio_path.write_bytes(b"RIFF$\x00\x00\x00WAVEfmt ")
+    env = os.environ.copy()
+    env["VOXX_FIXTURE_TRANSCRIPT"] = "server transcript"
+
+    process = subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name("transcribe.py")), "--serve"],
+        env=env,
+        text=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    assert process.stdin is not None
+    assert process.stdout is not None
+    ready = json.loads(process.stdout.readline())
+    assert ready["ready"] is True
+
+    process.stdin.write(json.dumps({"audio": str(audio_path)}) + "\n")
+    process.stdin.flush()
+    response = json.loads(process.stdout.readline())
+    process.terminate()
+    process.wait(timeout=5)
+
+    assert response["rawText"] == "server transcript"
+    assert response["error"] is None
