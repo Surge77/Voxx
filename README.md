@@ -52,10 +52,16 @@ For local sidecar smoke tests without Whisper installed, set:
 $env:VOXX_FIXTURE_TRANSCRIPT = "react query"
 ```
 
-The default dev transcription model is `tiny.en` on CPU with int8 compute so the app stays responsive on machines without CUDA/cuBLAS installed. Override it when you want higher accuracy:
+The default dev transcription model is `small.en` on CPU with int8 compute for better accuracy on machines without CUDA/cuBLAS installed. Voxx warms the transcription sidecar while recording starts, then reuses it for later recordings. Override it when you want the large GPU model:
 
 ```powershell
 $env:VOXX_WHISPER_MODEL = "large-v3-turbo"
 $env:VOXX_WHISPER_DEVICE = "cuda"
 $env:VOXX_WHISPER_COMPUTE_TYPE = "float16"
+```
+
+Noise reduction is adaptive: very quiet clips are normalized and sent to Whisper without noisereduce because spectral gating can damage low-volume speech and cause hallucinated text. Raise or lower this threshold with:
+
+```powershell
+$env:VOXX_NOISE_REDUCTION_MIN_RMS = "0.01"
 ```

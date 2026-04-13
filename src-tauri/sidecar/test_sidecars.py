@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from transcribe import prepare_audio_for_noise_reduction
+from transcribe import normalize_audio_for_whisper, prepare_audio_for_noise_reduction
 
 
 def test_transcribe_fixture_returns_json(tmp_path: Path):
@@ -42,7 +42,22 @@ def test_transcribe_defaults_to_cpu_int8_model():
 
     assert transcribe.DEVICE == "cpu"
     assert transcribe.COMPUTE_TYPE == "int8"
-    assert transcribe.MODEL_NAME == "tiny.en"
+    assert transcribe.MODEL_NAME == "small.en"
+
+
+def test_normalize_audio_for_whisper_lifts_quiet_signal_without_clipping():
+    quiet = np.array([0.0, 0.05, -0.025], dtype=np.float32)
+
+    normalized = normalize_audio_for_whisper(quiet)
+
+    assert np.max(np.abs(normalized)) > np.max(np.abs(quiet))
+    assert np.max(np.abs(normalized)) <= 1.0
+
+
+def test_noise_reduction_threshold_defaults_above_quiet_sample():
+    import transcribe
+
+    assert transcribe.NOISE_REDUCTION_MIN_RMS == 0.01
 
 
 def test_transcribe_server_fixture_handles_json_line_request(tmp_path: Path):
