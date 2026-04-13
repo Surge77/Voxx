@@ -1,11 +1,12 @@
 import { register, unregisterAll } from "@tauri-apps/plugin-global-shortcut";
 import { api, isTauriRuntime } from "./tauri";
+import type { PipelineResult } from "../types";
 
 type HotkeyHandlers = {
   onRecordingStart: () => void;
   onProcessingStart: () => void;
   onError: (message: string) => void;
-  onDone: () => Promise<void>;
+  onDone: (result: PipelineResult) => Promise<void>;
 };
 
 export async function registerRecordingHotkey(handlers: HotkeyHandlers) {
@@ -24,8 +25,8 @@ export async function registerRecordingHotkey(handlers: HotkeyHandlers) {
 
       if (event.state === "Released") {
         handlers.onProcessingStart();
-        await api.stopRecordingAndProcess();
-        await handlers.onDone();
+        const result = await api.stopRecordingAndProcess();
+        await handlers.onDone(result);
       }
     } catch (error) {
       handlers.onError(error instanceof Error ? error.message : "Hotkey pipeline failed");

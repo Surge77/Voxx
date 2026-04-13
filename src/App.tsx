@@ -6,6 +6,7 @@ import { Modes } from "./components/Modes";
 import { Settings } from "./components/Settings";
 import { Stats } from "./components/Stats";
 import { registerRecordingHotkey } from "./lib/hotkeys";
+import { statusMessageForPipelineResult } from "./lib/pipelineStatus";
 import { api } from "./lib/tauri";
 import type {
   AppPreferences,
@@ -79,9 +80,9 @@ export function App() {
         setRecordingState("error");
         setStatusMessage(message);
       },
-      onDone: async () => {
-        setRecordingState("idle");
-        setStatusMessage("Pasted transcription");
+      onDone: async (result) => {
+        setRecordingState(result.error ? "error" : "idle");
+        setStatusMessage(statusMessageForPipelineResult(result));
         await refreshData();
       }
     }).catch((error) => {
@@ -106,12 +107,7 @@ export function App() {
       setStatusMessage("Processing");
       const result = await api.stopRecordingAndProcess();
 
-      if (result.ignored) {
-        setStatusMessage("Ignored short hold");
-      } else {
-        setStatusMessage(result.error ?? "Pasted transcription");
-      }
-
+      setStatusMessage(statusMessageForPipelineResult(result));
       setRecordingState(result.error ? "error" : "idle");
       await refreshData();
     } catch (error) {
