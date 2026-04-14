@@ -141,7 +141,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .items(&[&open, &general, &code, &command, &email, &quit])
         .build()?;
 
-    TrayIconBuilder::with_id("main")
+    let tray = TrayIconBuilder::with_id("main")
         .tooltip("Voxx")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -164,7 +164,13 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
                 show_main_window(tray.app_handle());
             }
         })
-        .build(app)?;
+        ;
+    let tray = if let Some(icon) = app.default_window_icon().cloned() {
+        tray.icon(icon)
+    } else {
+        tray
+    };
+    tray.build(app)?;
 
     Ok(())
 }

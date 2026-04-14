@@ -26,6 +26,12 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
     "publisher": "Voxx",
     "shortDescription": "Your voice, typed instantly.",
     "longDescription": "Voxx records voice from a global hotkey, transcribes it locally, formats it with Ollama, and pastes the result at the cursor.",
