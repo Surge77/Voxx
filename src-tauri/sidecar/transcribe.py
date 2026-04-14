@@ -3,20 +3,51 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import site
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 
-MODEL_NAME = os.getenv("VOXX_WHISPER_MODEL", "small.en")
-DEVICE = os.getenv("VOXX_WHISPER_DEVICE", "cpu")
-COMPUTE_TYPE = os.getenv("VOXX_WHISPER_COMPUTE_TYPE", "int8")
+MODEL_NAME = os.getenv("VOXX_WHISPER_MODEL", "large-v3-turbo")
+# Use CUDA on the GTX 1650; fall back to CPU if CUDA is unavailable.
+DEVICE = os.getenv("VOXX_WHISPER_DEVICE", "cuda")
+# int8_float16 keeps VRAM usage low while retaining GPU speed.
+COMPUTE_TYPE = os.getenv("VOXX_WHISPER_COMPUTE_TYPE", "int8_float16")
 LANGUAGE = "en"
 MIN_RMS = float(os.getenv("VOXX_MIN_RMS", "0.002"))
 MAX_GAIN = float(os.getenv("VOXX_MAX_GAIN", "12"))
 MIN_AVG_LOGPROB = float(os.getenv("VOXX_MIN_AVG_LOGPROB", "-0.75"))
 NOISE_REDUCTION_MIN_RMS = float(os.getenv("VOXX_NOISE_REDUCTION_MIN_RMS", "0.01"))
+FALLBACK_MODEL_NAME = os.getenv("VOXX_WHISPER_FALLBACK_MODEL", "small.en")
+FALLBACK_DEVICE = os.getenv("VOXX_WHISPER_FALLBACK_DEVICE", "cpu")
+FALLBACK_COMPUTE_TYPE = os.getenv("VOXX_WHISPER_FALLBACK_COMPUTE_TYPE", "int8")
+
+
+def configure_cuda_dll_paths() -> None:
+    if os.name != "nt":
+        return
+
+    candidates: list[Path] = []
+    for root in map(Path, site.getsitepackages()):
+        candidates.extend(
+            [
+                root / "nvidia" / "cublas" / "bin",
+                root / "nvidia" / "cudnn" / "bin",
+                root / "nvidia" / "cuda_nvrtc" / "bin",
+                root / "ctranslate2",
+            ]
+        )
+
+    for candidate in candidates:
+        if candidate.exists():
+            os.add_dll_directory(str(candidate))
+
+    existing_path = os.environ.get("PATH", "")
+    dll_path = os.pathsep.join(str(candidate) for candidate in candidates if candidate.exists())
+    if dll_path:
+        os.environ["PATH"] = f"{dll_path}{os.pathsep}{existing_path}"
 
 
 def prepare_audio_for_noise_reduction(data):
@@ -67,7 +98,20 @@ def filter_low_confidence_segments(segments):
     return filtered
 
 
-def transcribe(audio_path: Path, model: Any | None = None) -> dict[str, object]:
+def load_whisper_model(model_name: str = MODEL_NAME, device: str = DEVICE, compute_type: str = COMPUTE_TYPE):
+    configure_cuda_dll_paths()
+    from faster_whisper import WhisperModel
+
+    return WhisperModel(model_name, device=device, compute_type=compute_type)
+
+
+def transcribe(
+    audio_path: Path,
+    model: Any | None = None,
+    model_name: str = MODEL_NAME,
+    device: str = DEVICE,
+    compute_type: str = COMPUTE_TYPE,
+) -> dict[str, object]:
     started = time.perf_counter()
     timings: dict[str, int] = {}
 
@@ -85,7 +129,6 @@ def transcribe(audio_path: Path, model: Any | None = None) -> dict[str, object]:
         import noisereduce as nr
         import numpy as np
         import soundfile as sf
-        from faster_whisper import WhisperModel
     except Exception as exc:
         return {
             "rawText": "",
@@ -122,29 +165,60 @@ def transcribe(audio_path: Path, model: Any | None = None) -> dict[str, object]:
         reduced = audio
         timings["noiseReductionApplied"] = 0
     reduced = normalize_audio_for_whisper(reduced)
-    clean_path = audio_path.with_name(f"{audio_path.stem}.clean.wav")
-    sf.write(str(clean_path), reduced, sample_rate)
     timings["rmsBefore"] = int(rms_before * 1_000_000)
     timings["rmsAfter"] = int(audio_rms(reduced) * 1_000_000)
     timings["noiseReductionMs"] = int((time.perf_counter() - noise_started) * 1000)
+    # Resample to 16 kHz in-memory if needed — Whisper's native sample rate.
+    # This avoids writing a .clean.wav to disk and reading it back.
+    if sample_rate != 16000:
+        import scipy.signal
+        num_samples = int(len(reduced) * 16000 / sample_rate)
+        reduced = scipy.signal.resample(reduced, num_samples).astype(np.float32)
+        sample_rate = 16000
 
     if model is None:
         model_started = time.perf_counter()
-        model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+        model = load_whisper_model(model_name, device, compute_type)
         timings["modelLoadMs"] = int((time.perf_counter() - model_started) * 1000)
     else:
         timings["modelLoadMs"] = 0
 
     transcribe_started = time.perf_counter()
-    segments, info = model.transcribe(
-        str(clean_path),
-        language=LANGUAGE,
-        vad_filter=True,
-        beam_size=5,
-        temperature=0,
-        condition_on_previous_text=False,
-    )
-    filtered_segments = filter_low_confidence_segments(segments)
+    try:
+        # Pass the numpy array directly — no disk I/O for the cleaned audio.
+        # beam_size=1 is greedy decoding: fastest possible, minimal quality loss
+        # for short voice clips. best_of=1 disables sampling candidates.
+        segments, info = model.transcribe(
+            reduced,
+            language=LANGUAGE,
+            vad_filter=True,
+            beam_size=1,
+            best_of=1,
+            temperature=0,
+            condition_on_previous_text=False,
+        )
+        filtered_segments = filter_low_confidence_segments(segments)
+    except RuntimeError:
+        if device == FALLBACK_DEVICE and model_name == FALLBACK_MODEL_NAME:
+            raise
+
+        fallback_started = time.perf_counter()
+        fallback_model = load_whisper_model(FALLBACK_MODEL_NAME, FALLBACK_DEVICE, FALLBACK_COMPUTE_TYPE)
+        timings["fallbackModelLoadMs"] = int((time.perf_counter() - fallback_started) * 1000)
+        timings["fallbackUsed"] = 1
+        model_name = FALLBACK_MODEL_NAME
+        device = FALLBACK_DEVICE
+        compute_type = FALLBACK_COMPUTE_TYPE
+        segments, info = fallback_model.transcribe(
+            reduced,
+            language=LANGUAGE,
+            vad_filter=True,
+            beam_size=1,
+            best_of=1,
+            temperature=0,
+            condition_on_previous_text=False,
+        )
+        filtered_segments = filter_low_confidence_segments(segments)
     parsed_segments = [
         {
             "start": segment.start,
@@ -162,9 +236,9 @@ def transcribe(audio_path: Path, model: Any | None = None) -> dict[str, object]:
         "rawText": raw_text,
         "segments": parsed_segments,
         "language": info.language,
-        "model": MODEL_NAME,
-        "device": DEVICE,
-        "computeType": COMPUTE_TYPE,
+        "model": model_name,
+        "device": device,
+        "computeType": compute_type,
         "durationMs": int((time.perf_counter() - started) * 1000),
         "timings": timings,
         "error": None,
@@ -172,10 +246,13 @@ def transcribe(audio_path: Path, model: Any | None = None) -> dict[str, object]:
 
 
 def serve() -> int:
-    from faster_whisper import WhisperModel
-
     model_started = time.perf_counter()
-    model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE_TYPE)
+    if os.getenv("VOXX_FIXTURE_TRANSCRIPT"):
+        model = None
+        model_load_ms = 0
+    else:
+        model = load_whisper_model()
+        model_load_ms = int((time.perf_counter() - model_started) * 1000)
     print(
         json.dumps(
             {
@@ -183,7 +260,7 @@ def serve() -> int:
                 "model": MODEL_NAME,
                 "device": DEVICE,
                 "computeType": COMPUTE_TYPE,
-                "modelLoadMs": int((time.perf_counter() - model_started) * 1000),
+                "modelLoadMs": model_load_ms,
             }
         ),
         flush=True,

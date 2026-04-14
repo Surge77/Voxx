@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
-from transcribe import normalize_audio_for_whisper, prepare_audio_for_noise_reduction
+from transcribe import configure_cuda_dll_paths, normalize_audio_for_whisper, prepare_audio_for_noise_reduction
 
 
 def test_transcribe_fixture_returns_json(tmp_path: Path):
@@ -40,9 +40,9 @@ def test_prepare_audio_for_noise_reduction_converts_soundfile_stereo_to_mono():
 def test_transcribe_defaults_to_cpu_int8_model():
     import transcribe
 
-    assert transcribe.DEVICE == "cpu"
-    assert transcribe.COMPUTE_TYPE == "int8"
-    assert transcribe.MODEL_NAME == "small.en"
+    assert transcribe.DEVICE == "cuda"
+    assert transcribe.COMPUTE_TYPE == "int8_float16"
+    assert transcribe.MODEL_NAME == "large-v3-turbo"
 
 
 def test_normalize_audio_for_whisper_lifts_quiet_signal_without_clipping():
@@ -58,6 +58,10 @@ def test_noise_reduction_threshold_defaults_above_quiet_sample():
     import transcribe
 
     assert transcribe.NOISE_REDUCTION_MIN_RMS == 0.01
+
+
+def test_configure_cuda_dll_paths_is_safe_to_call():
+    configure_cuda_dll_paths()
 
 
 def test_transcribe_server_fixture_handles_json_line_request(tmp_path: Path):

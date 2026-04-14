@@ -5,6 +5,7 @@ mod modes;
 mod pipeline;
 mod state;
 
+use crate::pipeline::warm_transcriber;
 use commands::{
     audio::get_audio_devices,
     diagnostics::{get_ollama_status, run_diagnostics},
@@ -30,6 +31,7 @@ pub fn run() {
         .setup(|app| {
             let state = AppState::new(app.handle())?;
             app.manage(state);
+            warm_transcriber();
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
