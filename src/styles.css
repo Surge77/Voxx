@@ -27,6 +27,23 @@ body {
   font-family: var(--font-sans);
 }
 
+body.voxx-overlay-body {
+  background: transparent;
+}
+
+body.voxx-overlay-body #root {
+  min-height: 100vh;
+  background: transparent;
+}
+
+.voxx-overlay-root {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+}
+
 button,
 input,
 select,

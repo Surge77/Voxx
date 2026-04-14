@@ -8,13 +8,17 @@ use cpal::SampleFormat;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 const MIN_HOLD_MS: i64 = 300;
 
 #[tauri::command]
 pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    start_recording_impl(&app, &state)
+}
+
+pub fn start_recording_impl(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let mut recording = state.recording.lock().map_err(|_| "Recording lock poisoned".to_string())?;
     if recording.is_some() {
         return Ok(());
@@ -86,11 +90,17 @@ pub fn start_recording(app: AppHandle, state: State<'_, AppState>) -> Result<(),
         tauri::async_runtime::spawn(warm_ollama());
     }
 
+    show_overlay_window(app);
+    let _ = app.emit("voxx://recording-state", "recording");
     Ok(())
 }
 
 #[tauri::command]
 pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppState>) -> Result<PipelineResult, String> {
+    stop_recording_and_process_impl(app, &state).await
+}
+
+pub async fn stop_recording_and_process_impl(app: AppHandle, state: &AppState) -> Result<PipelineResult, String> {
     let session = {
         let mut recording = state.recording.lock().map_err(|_| "Recording lock poisoned".to_string())?;
         recording.take()
@@ -101,6 +111,8 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
     if let Some(stop_tx) = session.stop_tx.take() {
         let _ = stop_tx.send(());
     }
+    hide_overlay_window(&app);
+    let _ = app.emit("voxx://recording-state", "processing");
 
     let mode = state
         .preferences
@@ -109,7 +121,7 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
         .active_mode;
 
     if duration_ms < MIN_HOLD_MS {
-        return Ok(PipelineResult {
+        let result = PipelineResult {
             ignored: true,
             raw_text: String::new(),
             processed_text: String::new(),
@@ -117,14 +129,16 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
             duration_ms,
             history_id: None,
             error: None,
-        });
+        };
+        let _ = app.emit("voxx://recording-state", "idle");
+        return Ok(result);
     }
 
     write_wav(&session).map_err(|err| err.to_string())?;
     let raw_text = match transcribe_audio(&session.audio_path).await {
         Ok(text) => text,
         Err(error) => {
-            return Ok(PipelineResult {
+            let result = PipelineResult {
                 ignored: false,
                 raw_text: String::new(),
                 processed_text: String::new(),
@@ -132,14 +146,16 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
                 duration_ms,
                 history_id: None,
                 error: Some(format!("Transcription failed: {error}")),
-            });
+            };
+            let _ = app.emit("voxx://recording-state", "error");
+            return Ok(result);
         }
     };
 
     let processed_text = match post_process_with_ollama(&state.db, mode, &raw_text).await {
         Ok(text) => text,
         Err(error) => {
-            return Ok(PipelineResult {
+            let result = PipelineResult {
                 ignored: false,
                 raw_text,
                 processed_text: String::new(),
@@ -147,7 +163,9 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
                 duration_ms,
                 history_id: None,
                 error: Some(format!("Ollama post-processing failed: {error}")),
-            });
+            };
+            let _ = app.emit("voxx://recording-state", "error");
+            return Ok(result);
         }
     };
 
@@ -161,7 +179,7 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
         .insert_history(&raw_text, &processed_text, mode, duration_ms)
         .map_err(|err| err.to_string())?;
 
-    Ok(PipelineResult {
+    let result = PipelineResult {
         ignored: false,
         raw_text,
         processed_text,
@@ -169,7 +187,21 @@ pub async fn stop_recording_and_process(app: AppHandle, state: State<'_, AppStat
         duration_ms,
         history_id: Some(entry.id),
         error: None,
-    })
+    };
+    let _ = app.emit("voxx://recording-state", "idle");
+    Ok(result)
+}
+
+fn show_overlay_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.show();
+    }
+}
+
+fn hide_overlay_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("overlay") {
+        let _ = window.hide();
+    }
 }
 
 #[tauri::command]

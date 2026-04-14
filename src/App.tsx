@@ -5,14 +5,16 @@ import { FloatingOverlay } from "./components/FloatingOverlay";
 import { Modes } from "./components/Modes";
 import { Settings } from "./components/Settings";
 import { Stats } from "./components/Stats";
-import { registerRecordingHotkey } from "./lib/hotkeys";
+import { VoiceVisualizerCapsule } from "./components/VoiceVisualizerCapsule";
+import { listen } from "@tauri-apps/api/event";
 import { statusMessageForPipelineResult } from "./lib/pipelineStatus";
-import { api } from "./lib/tauri";
+import { api, isTauriRuntime } from "./lib/tauri";
 import type {
   AppPreferences,
   DiagnosticResult,
   DictionaryEntry,
   HistoryEntry,
+  PipelineResult,
   RecordingState
 } from "./types";
 
@@ -37,6 +39,7 @@ const navItems: Array<{ id: View; label: string }> = [
 ];
 
 export function App() {
+  const isOverlay = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("overlay");
   const [view, setView] = useState<View>("dashboard");
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -61,33 +64,56 @@ export function App() {
   }
 
   useEffect(() => {
+    document.body.classList.toggle("voxx-overlay-body", isOverlay);
+    return () => document.body.classList.remove("voxx-overlay-body");
+  }, [isOverlay]);
+
+  useEffect(() => {
     void refreshData().catch((error) => {
       setStatusMessage(error instanceof Error ? error.message : "Unable to load Voxx data");
     });
   }, []);
 
   useEffect(() => {
-    void registerRecordingHotkey({
-      onRecordingStart: () => {
-        setRecordingState("recording");
-        setStatusMessage("Recording");
-      },
-      onProcessingStart: () => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    const unlisten = Promise.all([
+      listen<string>("voxx://recording-state", (event) => {
+        if (event.payload === "recording") {
+          setRecordingState("recording");
+          setStatusMessage("Recording");
+          return;
+        }
+        if (event.payload === "processing") {
+          setRecordingState("idle");
+          setStatusMessage("Processing");
+          return;
+        }
+        if (event.payload === "error") {
+          setRecordingState("error");
+          return;
+        }
         setRecordingState("idle");
-        setStatusMessage("Processing");
-      },
-      onError: (message) => {
-        setRecordingState("error");
-        setStatusMessage(message);
-      },
-      onDone: async (result) => {
-        setRecordingState(result.error ? "error" : "idle");
-        setStatusMessage(statusMessageForPipelineResult(result));
+      }),
+      listen<PipelineResult>("voxx://pipeline-result", async (event) => {
+        setRecordingState(event.payload.error ? "error" : "idle");
+        setStatusMessage(statusMessageForPipelineResult(event.payload));
         await refreshData();
-      }
-    }).catch((error) => {
-      setStatusMessage(error instanceof Error ? error.message : "Unable to register Ctrl+Space");
-    });
+      }),
+      listen<string>("voxx://recording-error", (event) => {
+        setRecordingState("error");
+        setStatusMessage(event.payload);
+      }),
+      listen<AppPreferences>("voxx://preferences-changed", (event) => {
+        setPreferences(event.payload);
+      })
+    ]);
+
+    return () => {
+      void unlisten.then((callbacks) => callbacks.forEach((callback) => callback()));
+    };
   }, []);
 
   async function handleStartRecording() {
@@ -138,6 +164,14 @@ export function App() {
     }
     return <Dashboard history={history} onRefresh={refreshData} />;
   }, [diagnostics, dictionary, history, preferences, view]);
+
+  if (isOverlay) {
+    return (
+      <main className="voxx-overlay-root">
+        <VoiceVisualizerCapsule />
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-voxx-bg text-voxx-text">
